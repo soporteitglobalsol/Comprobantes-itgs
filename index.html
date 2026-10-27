@@ -2216,9 +2216,54 @@ async function generarBlobPdfEntrega(){
  if(typeof html2canvas==='undefined'||!window.jspdf||!window.jspdf.jsPDF)throw new Error('No se pudo cargar el generador PDF');
  const n=crearPdfEntregaVisual();
  try{
-  if(document.fonts&&document.fonts.ready)await document.fonts.ready;await esperarImagenes(n);await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r,60))));
-  const canvas=await html2canvas(n,{scale:3,useCORS:true,allowTaint:false,backgroundColor:'#fff',logging:false,scrollX:0,scrollY:0,width:816,height:1056,windowWidth:816,windowHeight:1056});
-  const {jsPDF}=window.jspdf,doc=new jsPDF({unit:'in',format:'letter',orientation:'portrait',compress:true}),img=canvas.toDataURL('image/jpeg',.97),pageW=8.5,pageH=11,ratio=Math.min(pageW/canvas.width,pageH/canvas.height),w=canvas.width*ratio,h=canvas.height*ratio;doc.addImage(img,'JPEG',(pageW-w)/2,(pageH-h)/2,w,h,undefined,'FAST');return doc.output('blob');
+  // Igual que Ingreso: renderizar visible unos milisegundos para capturar el ancho real.
+  n.style.left='0';n.style.top='0';n.style.opacity='1';n.style.visibility='visible';n.style.zIndex='2147483646';
+  if(document.fonts&&document.fonts.ready)await document.fonts.ready;
+  await esperarImagenes(n);
+  await new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(()=>setTimeout(r,80))));
+
+  const canvas=await html2canvas(n,{
+   scale:3,useCORS:true,allowTaint:false,backgroundColor:'#ffffff',logging:false,
+   scrollX:0,scrollY:0,width:816,height:1056,windowWidth:816,windowHeight:1056
+  });
+  if(!canvas||canvas.width<10||canvas.height<10)throw new Error('No se pudo capturar el comprobante de entrega');
+
+  // MISMO RECORTE QUE INGRESO: elimina la franja blanca exterior antes de crear el PDF.
+  const ctx=canvas.getContext('2d',{willReadFrequently:true});
+  const data=ctx.getImageData(0,0,canvas.width,canvas.height).data;
+  let minX=canvas.width,minY=canvas.height,maxX=-1,maxY=-1;
+  const step=2;
+  for(let yy=0;yy<canvas.height;yy+=step){
+   for(let xx=0;xx<canvas.width;xx+=step){
+    const i=(yy*canvas.width+xx)*4;
+    const r=data[i],g=data[i+1],b=data[i+2],a=data[i+3];
+    if(a>10&&(r<247||g<247||b<247)){
+     if(xx<minX)minX=xx;if(xx>maxX)maxX=xx;if(yy<minY)minY=yy;if(yy>maxY)maxY=yy;
+    }
+   }
+  }
+
+  let outCanvas=canvas;
+  if(maxX>=minX&&maxY>=minY){
+   const pad=18;
+   minX=Math.max(0,minX-pad);minY=Math.max(0,minY-pad);
+   maxX=Math.min(canvas.width-1,maxX+pad);maxY=Math.min(canvas.height-1,maxY+pad);
+   const cw=maxX-minX+1,ch=maxY-minY+1;
+   const cropped=document.createElement('canvas');cropped.width=cw;cropped.height=ch;
+   cropped.getContext('2d').drawImage(canvas,minX,minY,cw,ch,0,0,cw,ch);
+   outCanvas=cropped;
+  }
+
+  const {jsPDF}=window.jspdf;
+  const doc=new jsPDF({unit:'in',format:'letter',orientation:'portrait',compress:true});
+  const img=outCanvas.toDataURL('image/jpeg',.97);
+  const pageW=8.5,pageH=11,marginX=.28,marginY=.28;
+  const maxW=pageW-marginX*2,maxH=pageH-marginY*2;
+  const ratio=Math.min(maxW/outCanvas.width,maxH/outCanvas.height);
+  const w=outCanvas.width*ratio,h=outCanvas.height*ratio;
+  const x=(pageW-w)/2,y=(pageH-h)/2;
+  doc.addImage(img,'JPEG',x,y,w,h,undefined,'FAST');
+  return doc.output('blob');
  }finally{n.remove()}
 }
 async function guardarEntregaEnOneDrive(){
