@@ -1168,7 +1168,7 @@ const ES=['Recibido','En revisión','Listo','Entregado'];
 const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 function toast(m){const e=$('toast');e.textContent=m;e.style.display='block';clearTimeout(toast.t);toast.t=setTimeout(()=>e.style.display='none',3200)}
 const H={comp:['Comprobante de ingreso','Registrá el ingreso del equipo. El PDF, los datos y las fotos se guardan automáticamente en OneDrive.'],entrega:['Comprobante de entrega','Documento de salida del equipo con su ficha técnica dentro del mismo flujo.'],diagnostico:['Diagnóstico técnico','Documentá hallazgos, causas, solución y evidencia fotográfica del equipo.'],inv:['Estados de equipos','Panel de seguimiento para consultar y actualizar el estado de cada equipo.']};
-const USUARIOS_ESTADO_SOLO=['asistente.admon@itglobalsol.com','jefry.dubon@itglobalsol.com'];
+const USUARIOS_ESTADO_SOLO=['jefry.dubon@itglobalsol.com'];
 function correoActual(){return String(firebase.auth().currentUser?.email||'').toLowerCase()}
 function soloEstado(){return USUARIOS_ESTADO_SOLO.includes(correoActual())}
 function aplicarPermisosComprobante(){
@@ -1455,17 +1455,91 @@ function mostrarFraseDelDia(){
   if(zona) zona.textContent = frase;
 }
 
-let inventarioRefActivo=null;
+let inventarioRefsActivos=[];
+const inventarioSnapshots={
+ comprobantes_ingreso:{},
+ comprobantes_entrega:{},
+ diagnosticos:{},
+ registros:{} // compatibilidad con registros antiguos; no se escriben nuevos datos aquí
+};
+function rutaFirebaseDeRegistro(o={}){
+ const tipo=String(o.tipoDocumento||'ingreso').toLowerCase();
+ if(tipo==='entrega')return 'comprobantes_entrega';
+ if(tipo==='diagnostico')return 'diagnosticos';
+ return 'comprobantes_ingreso';
+}
+function codigoFirebaseDeRegistro(o={}){
+ const ruta=rutaFirebaseDeRegistro(o);
+ let codigo='';
+ if(ruta==='comprobantes_entrega')codigo=o.docNo||o.comp||'';
+ else if(ruta==='diagnosticos')codigo=o.docNo||o.diag||'';
+ else codigo=codigoIngreso(o)||o.comp||o.cod||'';
+ codigo=String(codigo||'').trim().toUpperCase();
+ if(!codigo)codigo='SIN-CODIGO-'+Date.now();
+ return codigo.replace(/[.#$\[\]\/]/g,'-');
+}
+function refrescarItemsFirebase(){
+ const combinados=[];
+ ['comprobantes_ingreso','comprobantes_entrega','diagnosticos','registros'].forEach(ruta=>{
+  const data=inventarioSnapshots[ruta]||{};
+  Object.entries(data).forEach(([key,v])=>{
+   if(!v||typeof v!=='object')return;
+   // Si un registro viejo ya existe en su nueva ruta, no se duplica en pantalla.
+   const codigoViejo=String(v.docNo||v.diag||v.comp||v.cod||'').toUpperCase();
+   if(ruta==='registros' && codigoViejo){
+    const nuevaRuta=rutaFirebaseDeRegistro(v);
+    const nuevoKey=codigoFirebaseDeRegistro(v);
+    if(inventarioSnapshots[nuevaRuta] && inventarioSnapshots[nuevaRuta][nuevoKey])return;
+   }
+   combinados.push({id:key,_rutaFirebase:ruta,...v});
+  });
+ });
+ setItems(combinados);
+}
+function detenerInventarioFirebase(){
+ inventarioRefsActivos.forEach(ref=>{try{ref.off('value')}catch(e){}});
+ inventarioRefsActivos=[];
+}
 async function initStore(){
  try{
-  if(inventarioRefActivo){inventarioRefActivo.off('value');inventarioRefActivo=null;}
-  const ref=firebase.database().ref('registros');
-  inventarioRefActivo=ref;
-  ref.on('value',snap=>{
-   const data=snap.val()||{};
-   setItems(Object.entries(data).map(([id,v])=>({id,...v})));
-  },e=>{toast('Error al leer el inventario: '+e.message);$('mode').textContent='Error de acceso a Firebase. Revisá las reglas de Realtime Database.';});
-  store={add:o=>ref.push(o),upd:(id,o)=>ref.child(id).update(o),del:id=>ref.child(id).remove()};
+  detenerInventarioFirebase();
+  const db=firebase.database();
+  const refs={
+   comprobantes_ingreso:db.ref('comprobantes_ingreso'),
+   comprobantes_entrega:db.ref('comprobantes_entrega'),
+   diagnosticos:db.ref('diagnosticos'),
+   registros:db.ref('registros')
+  };
+  Object.entries(refs).forEach(([ruta,ref])=>{
+   inventarioRefsActivos.push(ref);
+   ref.on('value',snap=>{
+    inventarioSnapshots[ruta]=snap.val()||{};
+    refrescarItemsFirebase();
+   },e=>{
+    // La ruta antigua es opcional; si sus reglas ya no permiten leerla, el sistema nuevo sigue funcionando.
+    if(ruta!=='registros'){
+     toast('Error al leer '+ruta+': '+e.message);
+     $('mode').textContent='Error de acceso a Firebase. Revisá las reglas de Realtime Database.';
+    }
+   });
+  });
+  store={
+   add:o=>{
+    const ruta=rutaFirebaseDeRegistro(o),key=codigoFirebaseDeRegistro(o);
+    return refs[ruta].child(key).set(o);
+   },
+   upd:(id,o)=>{
+    const actual=items.find(i=>String(i.id)===String(id));
+    const ruta=actual?actual._rutaFirebase:rutaFirebaseDeRegistro(o);
+    const key=actual?actual.id:codigoFirebaseDeRegistro(o);
+    return refs[ruta].child(key).update(o);
+   },
+   del:id=>{
+    const actual=items.find(i=>String(i.id)===String(id));
+    if(!actual)throw new Error('Registro no encontrado');
+    return refs[actual._rutaFirebase].child(actual.id).remove();
+   }
+  };
   mostrarFraseDelDia();
  }catch(e){
   store=null;
@@ -2388,7 +2462,7 @@ firebase.auth().onAuthStateChanged(user=>{
   document.body.classList.add('authed');$('logout').style.display='inline-block';
   nuevo();view('comp');aplicarPermisosComprobante();initStore();
  }else{
-  if(inventarioRefActivo){inventarioRefActivo.off('value');inventarioRefActivo=null;}
+  detenerInventarioFirebase();
   document.body.classList.remove('authed');$('logout').style.display='none';store=null;items=[];
  }
 });
