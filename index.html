@@ -1243,15 +1243,26 @@ function siguienteCodigoDiagnostico(){
  return 'DA-'+String(n).padStart(4,'0');
 }
 let buscadorIngresoDestino='ingreso';
+function colocarBuscadorIngreso(destino='ingreso'){
+ const p=$('ingresoSearchPanel');if(!p)return null;
+ let ancla=null;
+ if(destino==='entrega')ancla=document.querySelector('#v-entrega .delivery-link-card');
+ else if(destino==='diagnostico')ancla=document.querySelector('#v-diagnostico .diag-link-card');
+ else ancla=document.querySelector('#v-comp > .actions');
+ if(ancla&&p.previousElementSibling!==ancla)ancla.insertAdjacentElement('afterend',p);
+ return p;
+}
 function abrirBuscadorIngresoPara(destino){
  buscadorIngresoDestino=destino||'ingreso';
- const p=$('ingresoSearchPanel');if(!p)return;p.classList.add('on');p.setAttribute('aria-hidden','false');
- $('ingresoSearchInput').value='';renderBuscadorIngreso();setTimeout(()=>$('ingresoSearchInput').focus(),0);
+ const p=colocarBuscadorIngreso(buscadorIngresoDestino);if(!p)return;
+ p.classList.add('on');p.setAttribute('aria-hidden','false');
+ $('ingresoSearchInput').value='';renderBuscadorIngreso();setTimeout(()=>$('ingresoSearchInput')?.focus(),0);
 }
 function toggleBuscadorIngreso(){
  buscadorIngresoDestino='ingreso';
- const p=$('ingresoSearchPanel');if(!p)return;const on=!p.classList.contains('on');p.classList.toggle('on',on);p.setAttribute('aria-hidden',String(!on));
- if(on){$('ingresoSearchInput').value='';renderBuscadorIngreso();setTimeout(()=>$('ingresoSearchInput').focus(),0)}
+ const p=colocarBuscadorIngreso('ingreso');if(!p)return;
+ const on=!p.classList.contains('on');p.classList.toggle('on',on);p.setAttribute('aria-hidden',String(!on));
+ if(on){$('ingresoSearchInput').value='';renderBuscadorIngreso();setTimeout(()=>$('ingresoSearchInput')?.focus(),0)}
 }
 function cerrarBuscadorIngreso(){const p=$('ingresoSearchPanel');if(!p)return;p.classList.remove('on');p.setAttribute('aria-hidden','true')}
 function renderBuscadorIngreso(){
